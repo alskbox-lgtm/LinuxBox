@@ -402,7 +402,7 @@ object PackageCatalog {
                 PackageManagerType.DNF to listOf("mousepad")
             ),
             primaryBinary = "mousepad",
-            launchCommand = "DISPLAY=:1 mousepad &"
+            launchCommand = "DISPLAY=127.0.0.1:10 mousepad &"
         ),
         LinuxProgram(
             id = "thunar",
@@ -416,7 +416,7 @@ object PackageCatalog {
                 PackageManagerType.DNF to listOf("thunar")
             ),
             primaryBinary = "thunar",
-            launchCommand = "DISPLAY=:1 thunar &"
+            launchCommand = "DISPLAY=127.0.0.1:10 thunar &"
         ),
         LinuxProgram(
             id = "geany",
@@ -430,7 +430,7 @@ object PackageCatalog {
                 PackageManagerType.DNF to listOf("geany")
             ),
             primaryBinary = "geany",
-            launchCommand = "DISPLAY=:1 geany &"
+            launchCommand = "DISPLAY=127.0.0.1:10 geany &"
         )
     )
 

@@ -81,39 +81,29 @@ class DesktopController(
         val rootfs = distroManager.rootfsDir(distro.id)
 
         appendLog("[LinuxBox] Distro ativa: ${distro.name} ${distro.version}")
-        appendLog("[LinuxBox] Iniciando Xvfb ($resolution), Fluxbox e x11vnc na porta 5901...")
+        appendLog("[LinuxBox] Iniciando Xvfb TCP :10 ($resolution), Fluxbox e x11vnc na porta 5901...")
         _statusLog.value = "Iniciando servidor Xvfb ($resolution), Fluxbox e VNC..."
 
         val launchScript = """
             echo "[script] Limpando locks antigos..."
-            rm -f /tmp/.X1-lock /tmp/.X11-unix/X1 /tmp/xvfb.log /tmp/fluxbox.log /tmp/x11vnc.log 2>/dev/null || true
-            mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix
-            echo "[script] Iniciando Xvfb :1 -screen 0 ${resolution}x24..."
-            Xvfb :1 -screen 0 ${resolution}x24 -ac -nolisten tcp -noreset >/tmp/xvfb.log 2>&1 &
+            rm -f /tmp/.X10-lock /tmp/.X11-unix/X10 /tmp/xvfb.log /tmp/fluxbox.log /tmp/x11vnc.log 2>/dev/null || true
+            echo "[script] Iniciando Xvfb :10 em modo TCP (127.0.0.1:6010)..."
+            Xvfb :10 -screen 0 ${resolution}x24 -ac -nolisten unix -listen tcp -noreset >/tmp/xvfb.log 2>&1 &
             XVFB_PID=${'$'}!
-            i=0
-            while [ ! -S /tmp/.X11-unix/X1 ] && [ "${'$'}i" -lt 25 ]; do
-                if ! kill -0 "${'$'}XVFB_PID" 2>/dev/null; then
-                    echo "[script] ERRO: Xvfb encerrou prematuramente!"
-                    cat /tmp/xvfb.log 2>/dev/null || true
-                    exit 1
-                fi
-                sleep 0.2
-                i=${'$'}((i + 1))
-            done
-            if [ ! -S /tmp/.X11-unix/X1 ]; then
-                echo "[script] ERRO: Socket /tmp/.X11-unix/X1 não apareceu após 5s."
+            sleep 1
+            if ! kill -0 "${'$'}XVFB_PID" 2>/dev/null; then
+                echo "[script] ERRO: Xvfb encerrou prematuramente!"
                 cat /tmp/xvfb.log 2>/dev/null || true
                 exit 1
             fi
             echo "[script] Xvfb pronto! Iniciando Fluxbox..."
-            export DISPLAY=:1
+            export DISPLAY=127.0.0.1:10
             xsetroot -solid '#101820' 2>/dev/null || true
             fluxbox >/tmp/fluxbox.log 2>&1 &
             sleep 0.5
             xterm -geometry 80x24+32+32 -fa 'DejaVu Sans Mono' -fs 11 -bg '#0B0F14' -fg '#E6EDF3' -title 'LinuxBox Desktop' >/dev/null 2>&1 &
             echo "[script] Iniciando x11vnc em 127.0.0.1:5901..."
-            exec x11vnc -display :1 -nopw -listen 127.0.0.1 -rfbport 5901 -forever -shared -noxdamage -noshm -noxrecord 2>&1
+            exec x11vnc -display 127.0.0.1:10 -nopw -listen 127.0.0.1 -rfbport 5901 -forever -shared -noxdamage -noshm -noxrecord 2>&1
         """.trimIndent()
 
         try {
@@ -192,7 +182,7 @@ class DesktopController(
 
     fun launchGuiApp(command: String) {
         try {
-            commandRunner.startBackgroundCommand("DISPLAY=:1 nohup $command >/dev/null 2>&1 &")
+            commandRunner.startBackgroundCommand("DISPLAY=127.0.0.1:10 nohup $command >/dev/null 2>&1 &")
         } catch (_: Throwable) {
             // ignore
         }

@@ -85,7 +85,7 @@ object ProotCommandBuilder {
         args.add("LC_ALL=C.UTF-8")
         args.add("PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
         args.add("TMPDIR=/tmp")
-        args.add("DISPLAY=:1")
+        args.add("DISPLAY=127.0.0.1:10")
         args.add("MOZ_FAKE_NO_SANDBOX=1")
         args.add("DEBIAN_FRONTEND=noninteractive")
         extraEnv.forEach { (k, v) ->
