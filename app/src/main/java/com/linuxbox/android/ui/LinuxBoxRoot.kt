@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.SystemUpdateAlt
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -54,6 +55,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.linuxbox.android.BuildConfig
+import com.linuxbox.android.core.AppUpdateInfo
 import com.linuxbox.android.core.SetupProgress
 import com.linuxbox.android.ui.desktop.DesktopScreen
 import com.linuxbox.android.ui.distros.SystemsScreen
@@ -68,6 +71,9 @@ fun LinuxBoxRoot(viewModel: LinuxBoxViewModel) {
     val bootstrapError by viewModel.bootstrapError.collectAsState()
     val selectedTab by viewModel.selectedTab.collectAsState()
     val consoleTask by viewModel.consoleTask.collectAsState()
+    val pendingInstaller by viewModel.pendingInstallerPrompt.collectAsState()
+    val availableUpdate by viewModel.availableUpdate.collectAsState()
+    val updateDownloadProgress by viewModel.updateDownloadProgress.collectAsState()
 
     if (isBootstrapping || bootstrapError != null) {
         BootstrapScreen(
@@ -369,6 +375,202 @@ private fun ConsoleTaskDialog(
                                 Spacer(Modifier.width(4.dp))
                                 Text("Abrir no Terminal", color = Color(0xFF041309), fontWeight = FontWeight.Bold)
                             }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun InstallerModeDialog(
+    prompt: PendingInstallerPrompt,
+    onRunInGui: () -> Unit,
+    onRunInTerminal: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            color = LinuxBoxColors.Surface,
+            shape = RoundedCornerShape(16.dp),
+            border = BorderStroke(1.dp, LinuxBoxColors.Border),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(18.dp)) {
+                Text(
+                    text = "Como executar o instalador?",
+                    color = LinuxBoxColors.TextPrimary,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = prompt.fileName,
+                    color = LinuxBoxColors.Secondary,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 12.5.sp
+                )
+                Text(
+                    text = "Sistema ativo: ${prompt.distro.name} ${prompt.distro.version}",
+                    color = LinuxBoxColors.TextSecondary,
+                    fontSize = 12.sp
+                )
+
+                Spacer(Modifier.height(16.dp))
+
+                Button(
+                    onClick = onRunInGui,
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = LinuxBoxColors.Secondary),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.Computer, null, tint = Color(0xFF041520), modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "Rodar pela UI Gráfica (Desktop X11)",
+                        color = Color(0xFF041520),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp
+                    )
+                }
+
+                Spacer(Modifier.height(8.dp))
+
+                Button(
+                    onClick = onRunInTerminal,
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = LinuxBoxColors.Primary),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.Terminal, null, tint = Color(0xFF041309), modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "Rodar apenas no Terminal (CLI)",
+                        color = Color(0xFF041309),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp
+                    )
+                }
+
+                Spacer(Modifier.height(10.dp))
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    OutlinedButton(onClick = onDismiss) {
+                        Text("Cancelar")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AppUpdateDialog(
+    update: AppUpdateInfo,
+    downloadProgress: Float?,
+    onDownloadAndInstall: () -> Unit,
+    onOpenGitHub: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val isDownloading = downloadProgress != null
+    Dialog(onDismissRequest = { if (!isDownloading) onDismiss() }) {
+        Surface(
+            color = LinuxBoxColors.Surface,
+            shape = RoundedCornerShape(16.dp),
+            border = BorderStroke(1.dp, LinuxBoxColors.Primary.copy(alpha = 0.7f)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(18.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(
+                        Icons.Default.SystemUpdateAlt,
+                        null,
+                        tint = LinuxBoxColors.Primary,
+                        modifier = Modifier.size(26.dp)
+                    )
+                    Column {
+                        Text(
+                            text = "Atualização Disponível!",
+                            color = LinuxBoxColors.TextPrimary,
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "v${BuildConfig.VERSION_NAME} → ${update.tagName}",
+                            color = LinuxBoxColors.Primary,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+
+                if (update.releaseNotes.isNotBlank()) {
+                    Spacer(Modifier.height(12.dp))
+                    Surface(
+                        color = LinuxBoxColors.Background,
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(1.dp, LinuxBoxColors.Border),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(140.dp)
+                    ) {
+                        LazyColumn(modifier = Modifier.padding(10.dp)) {
+                            items(update.releaseNotes.lines()) { line ->
+                                Text(
+                                    text = line,
+                                    color = LinuxBoxColors.TextSecondary,
+                                    fontSize = 11.5.sp,
+                                    lineHeight = 16.sp
+                                )
+                            }
+                        }
+                    }
+                }
+
+                if (isDownloading) {
+                    Spacer(Modifier.height(14.dp))
+                    val pct = ((downloadProgress ?: 0f) * 100).toInt()
+                    Text(
+                        text = "Baixando APK do GitHub ($pct%)...",
+                        color = LinuxBoxColors.Secondary,
+                        fontSize = 12.sp,
+                        fontFamily = FontFamily.Monospace
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    LinearProgressIndicator(
+                        progress = { (downloadProgress ?: 0f).coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth(),
+                        color = LinuxBoxColors.Primary,
+                        trackColor = LinuxBoxColors.Border
+                    )
+                } else {
+                    Spacer(Modifier.height(16.dp))
+                    Button(
+                        onClick = onDownloadAndInstall,
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = LinuxBoxColors.Primary),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = "Baixar e Instalar ${update.tagName}",
+                            color = Color(0xFF041309),
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        OutlinedButton(onClick = onOpenGitHub) {
+                            Text("Ver no GitHub", fontSize = 12.sp)
+                        }
+                        OutlinedButton(onClick = onDismiss) {
+                            Text("Depois", fontSize = 12.sp)
                         }
                     }
                 }

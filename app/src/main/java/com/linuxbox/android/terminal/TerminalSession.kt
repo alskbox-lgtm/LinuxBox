@@ -13,6 +13,11 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.concurrent.thread
 
+enum class TerminalMode(val label: String) {
+    STANDALONE("Terminal Separado"),
+    DESKTOP_UI("Terminal da UI Gráfica")
+}
+
 /**
  * Represents a live interactive Linux terminal session backed by a real JNI PTY
  * executing PRoot inside the chosen Linux distribution.
@@ -21,11 +26,14 @@ class TerminalSession(
     val id: String,
     val distro: DistroDefinition,
     private val distroManager: DistroManager,
+    val mode: TerminalMode = TerminalMode.STANDALONE,
     initialCommand: String? = null,
     initialRows: Int = 28,
     initialCols: Int = 80
 ) {
-    private val _title = MutableStateFlow("${distro.name}")
+    private val _title = MutableStateFlow(
+        if (mode == TerminalMode.DESKTOP_UI) "UI: ${distro.name}" else distro.name
+    )
     val title: StateFlow<String> = _title.asStateFlow()
 
     private val _isRunning = MutableStateFlow(false)
@@ -67,9 +75,21 @@ class TerminalSession(
             listOf(shell, "-l", "-c", "$initialCommand; exec $shell -l")
         }
 
+        val modeEnv = when (mode) {
+            TerminalMode.DESKTOP_UI -> mapOf(
+                "DISPLAY" to "127.0.0.1:10",
+                "LINUXBOX_TERMINAL_MODE" to "DESKTOP_UI"
+            )
+            TerminalMode.STANDALONE -> mapOf(
+                "DISPLAY" to "",
+                "LINUXBOX_TERMINAL_MODE" to "STANDALONE"
+            )
+        }
+
         val spec = distroManager.buildProotSpec(
             distro = distro,
-            guestCommand = guestCmd
+            guestCommand = guestCmd,
+            extraEnv = modeEnv
         )
 
         val proc = try {

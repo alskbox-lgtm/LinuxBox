@@ -1,13 +1,17 @@
 package com.linuxbox.android.ui
 
 import android.app.Application
+import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.linuxbox.android.BuildConfig
 import com.linuxbox.android.LinuxBoxApp
+import com.linuxbox.android.core.AppUpdateInfo
 import com.linuxbox.android.core.DistroDefinition
 import com.linuxbox.android.core.DistroInstallState
+import com.linuxbox.android.core.GitHubUpdater
 import com.linuxbox.android.core.LinuxProgram
 import com.linuxbox.android.core.PackageCatalog
 import com.linuxbox.android.core.PackageManagerType
@@ -15,6 +19,7 @@ import com.linuxbox.android.core.ProgramCategory
 import com.linuxbox.android.core.RepoSearchResult
 import com.linuxbox.android.core.SetupProgress
 import com.linuxbox.android.service.LinuxSessionService
+import com.linuxbox.android.terminal.TerminalMode
 import com.linuxbox.android.terminal.TerminalSession
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -40,6 +45,12 @@ data class ConsoleTaskState(
     val exitCode: Int? = null,
     val lines: List<String> = emptyList(),
     val launchAfterCommand: String? = null
+)
+
+data class PendingInstallerPrompt(
+    val fileName: String,
+    val guestPath: String,
+    val distro: DistroDefinition
 )
 
 class LinuxBoxViewModel(application: Application) : AndroidViewModel(application) {
@@ -102,6 +113,23 @@ class LinuxBoxViewModel(application: Application) : AndroidViewModel(application
     private val _consoleTask = MutableStateFlow<ConsoleTaskState?>(null)
     val consoleTask: StateFlow<ConsoleTaskState?> = _consoleTask.asStateFlow()
 
+    // Installer mode chooser (Terminal CLI vs Graphical UI)
+    private val _pendingInstallerPrompt = MutableStateFlow<PendingInstallerPrompt?>(null)
+    val pendingInstallerPrompt: StateFlow<PendingInstallerPrompt?> = _pendingInstallerPrompt.asStateFlow()
+
+    // Automatic GitHub update checker state
+    private val _availableUpdate = MutableStateFlow<AppUpdateInfo?>(null)
+    val availableUpdate: StateFlow<AppUpdateInfo?> = _availableUpdate.asStateFlow()
+
+    private val _isCheckingUpdate = MutableStateFlow(false)
+    val isCheckingUpdate: StateFlow<Boolean> = _isCheckingUpdate.asStateFlow()
+
+    private val _updateStatusMessage = MutableStateFlow<String?>(null)
+    val updateStatusMessage: StateFlow<String?> = _updateStatusMessage.asStateFlow()
+
+    private val _updateDownloadProgress = MutableStateFlow<Float?>(null)
+    val updateDownloadProgress: StateFlow<Float?> = _updateDownloadProgress.asStateFlow()
+
     // Engine settings
     private val _mountAndroidStorage = MutableStateFlow(distroManager.mountAndroidStorage)
     val mountAndroidStorage: StateFlow<Boolean> = _mountAndroidStorage.asStateFlow()
@@ -127,12 +155,13 @@ class LinuxBoxViewModel(application: Application) : AndroidViewModel(application
                 _activeDistro.value = distro
                 _distroStates.value = distroManager.listDistroStates()
                 if (sessionManager.sessions.value.isEmpty()) {
-                    sessionManager.createSession(distro = distro)
+                    sessionManager.createSession(distro = distro, mode = TerminalMode.STANDALONE)
                 }
                 startForegroundServiceSafe("${distro.name} ${distro.version} ativo")
                 _isBootstrapping.value = false
                 refreshInstalledPackages()
                 desktopController.refreshInstalledState()
+                checkForAppUpdate(silent = true)
                 pendingInstallerUri?.let { uri ->
                     pendingInstallerUri = null
                     handleInstallerUri(uri)
@@ -159,9 +188,20 @@ class LinuxBoxViewModel(application: Application) : AndroidViewModel(application
         _fontSizeSp.value = (_fontSizeSp.value + delta).coerceIn(9f, 24f)
     }
 
-    fun createNewTerminalSession(initialCommand: String? = null): TerminalSession {
+    fun selectTerminalMode(mode: TerminalMode) {
+        sessionManager.selectMode(mode, autoCreateIfEmpty = true)
+    }
+
+    fun createNewTerminalSession(
+        mode: TerminalMode = sessionManager.selectedMode.value,
+        initialCommand: String? = null
+    ): TerminalSession {
         val distro = _activeDistro.value
-        val session = sessionManager.createSession(distro = distro, initialCommand = initialCommand)
+        val session = sessionManager.createSession(
+            distro = distro,
+            mode = mode,
+            initialCommand = initialCommand
+        )
         startForegroundServiceSafe("${distro.name} • ${sessionManager.sessions.value.size} sessão(ões)")
         return session
     }
@@ -177,9 +217,12 @@ class LinuxBoxViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun runCommandInTerminal(command: String) {
+    fun runCommandInTerminal(
+        command: String,
+        mode: TerminalMode = sessionManager.selectedMode.value
+    ) {
         _selectedTab.value = MainTab.TERMINAL
-        sessionManager.runInTerminal(command)
+        sessionManager.runInTerminal(command, mode)
         startForegroundServiceSafe("${_activeDistro.value.name} ativo")
     }
 
@@ -331,45 +374,10 @@ class LinuxBoxViewModel(application: Application) : AndroidViewModel(application
                     } ?: throw IllegalStateException("Não foi possível ler o arquivo selecionado.")
                 }
 
-                val guestPath = "/tmp/${destFile.name}"
-                val lower = safeName.lowercase()
-                val cmd = when {
-                    lower.endsWith(".deb") -> {
-                        when (distro.packageManager) {
-                            PackageManagerType.APT ->
-                                "dpkg -i '$guestPath' || (apt-get update && apt-get install -f -y)"
-                            else ->
-                                "echo 'Pacotes .deb são para Ubuntu ou Debian.' && echo 'Vá na aba Sistemas, ative Ubuntu ou Debian e abra o arquivo novamente.' && exit 1"
-                        }
-                    }
-                    lower.endsWith(".rpm") -> {
-                        when (distro.packageManager) {
-                            PackageManagerType.DNF -> "dnf install -y '$guestPath'"
-                            else -> "if command -v rpm >/dev/null 2>&1; then rpm -ivh '$guestPath'; else echo 'Pacotes .rpm são para Fedora.'; exit 1; fi"
-                        }
-                    }
-                    lower.endsWith(".apk") -> {
-                        "apk add --allow-untrusted '$guestPath'"
-                    }
-                    lower.endsWith(".pkg.tar.zst") || lower.endsWith(".pkg.tar.xz") -> {
-                        "pacman -U --noconfirm '$guestPath'"
-                    }
-                    lower.endsWith(".appimage") -> {
-                        "chmod +x '$guestPath' && APPIMAGE_EXTRACT_AND_RUN=1 '$guestPath'"
-                    }
-                    lower.endsWith(".sh") || lower.endsWith(".run") -> {
-                        "chmod +x '$guestPath' && sh '$guestPath'"
-                    }
-                    else -> {
-                        "chmod +x '$guestPath' && '$guestPath'"
-                    }
-                }
-
-                _selectedTab.value = MainTab.PROGRAMS
-                runConsoleTask(
-                    title = "Instalando $safeName",
-                    command = cmd,
-                    launchAfter = null
+                _pendingInstallerPrompt.value = PendingInstallerPrompt(
+                    fileName = safeName,
+                    guestPath = "/tmp/${destFile.name}",
+                    distro = distro
                 )
             } catch (t: Throwable) {
                 _consoleTask.value = ConsoleTaskState(
@@ -380,6 +388,152 @@ class LinuxBoxViewModel(application: Application) : AndroidViewModel(application
                     lines = listOf("Falha ao abrir arquivo: ${t.message}")
                 )
             }
+        }
+    }
+
+    fun dismissPendingInstaller() {
+        _pendingInstallerPrompt.value = null
+    }
+
+    fun executePendingInstallerInTerminal() {
+        val prompt = _pendingInstallerPrompt.value ?: return
+        _pendingInstallerPrompt.value = null
+        val cmd = buildInstallerCommand(prompt.fileName, prompt.guestPath, prompt.distro)
+        runCommandInTerminal(cmd, mode = TerminalMode.STANDALONE)
+    }
+
+    fun executePendingInstallerInGui() {
+        val prompt = _pendingInstallerPrompt.value ?: return
+        _pendingInstallerPrompt.value = null
+        val cmd = buildInstallerCommand(prompt.fileName, prompt.guestPath, prompt.distro)
+        val lower = prompt.fileName.lowercase()
+
+        viewModelScope.launch {
+            _selectedTab.value = MainTab.DESKTOP
+            desktopController.refreshInstalledState()
+            if (!desktopController.isDesktopInstalled.value) {
+                // Desktop GUI not installed yet -> run inside Desktop-UI terminal branch with guidance
+                runCommandInTerminal(
+                    "echo 'Desktop Gráfico ainda não instalado. Instalando ou rode na aba Desktop.' && $cmd",
+                    mode = TerminalMode.DESKTOP_UI
+                )
+                return@launch
+            }
+            if (!desktopController.isServerRunning.value) {
+                startForegroundServiceSafe("Desktop Linux (1024x600)")
+                desktopController.startDesktop("1024x600")
+            }
+            val guiCommand = if (lower.endsWith(".appimage") || lower.endsWith(".run")) {
+                cmd
+            } else {
+                val escaped = cmd.replace("'", "'\\''")
+                "xterm -geometry 92x28+24+24 -fa 'DejaVu Sans Mono' -fs 11 -bg '#0B0F14' -fg '#E6EDF3' -title 'Instalador: ${prompt.fileName}' -e sh -c '$escaped; echo; echo \"Concluído. Pressione Enter para fechar.\"; read _'"
+            }
+            desktopController.launchGuiApp(guiCommand)
+        }
+    }
+
+    private fun buildInstallerCommand(
+        safeName: String,
+        guestPath: String,
+        distro: DistroDefinition
+    ): String {
+        val lower = safeName.lowercase()
+        return when {
+            lower.endsWith(".deb") -> {
+                when (distro.packageManager) {
+                    PackageManagerType.APT ->
+                        "dpkg -i '$guestPath' || (apt-get update && apt-get install -f -y)"
+                    else ->
+                        "echo 'Pacotes .deb são para Ubuntu ou Debian.' && echo 'Vá na aba Sistemas, ative Ubuntu ou Debian e abra o arquivo novamente.' && exit 1"
+                }
+            }
+            lower.endsWith(".rpm") -> {
+                when (distro.packageManager) {
+                    PackageManagerType.DNF -> "dnf install -y '$guestPath'"
+                    else -> "if command -v rpm >/dev/null 2>&1; then rpm -ivh '$guestPath'; else echo 'Pacotes .rpm são para Fedora.'; exit 1; fi"
+                }
+            }
+            lower.endsWith(".apk") -> {
+                "apk add --allow-untrusted '$guestPath'"
+            }
+            lower.endsWith(".pkg.tar.zst") || lower.endsWith(".pkg.tar.xz") -> {
+                "pacman -U --noconfirm '$guestPath'"
+            }
+            lower.endsWith(".appimage") -> {
+                "chmod +x '$guestPath' && APPIMAGE_EXTRACT_AND_RUN=1 '$guestPath'"
+            }
+            lower.endsWith(".sh") || lower.endsWith(".run") -> {
+                "chmod +x '$guestPath' && sh '$guestPath'"
+            }
+            else -> {
+                "chmod +x '$guestPath' && '$guestPath'"
+            }
+        }
+    }
+
+    fun checkForAppUpdate(silent: Boolean = false) {
+        if (_isCheckingUpdate.value) return
+        viewModelScope.launch {
+            _isCheckingUpdate.value = true
+            if (!silent) {
+                _updateStatusMessage.value = "Verificando atualizações no GitHub..."
+            }
+            val update = GitHubUpdater.checkForUpdate(BuildConfig.VERSION_NAME)
+            _availableUpdate.value = update
+            _isCheckingUpdate.value = false
+            if (update != null) {
+                _updateStatusMessage.value = "Nova versão disponível: ${update.tagName}"
+            } else if (!silent) {
+                _updateStatusMessage.value = "Você já está na versão mais recente (v${BuildConfig.VERSION_NAME})."
+            }
+        }
+    }
+
+    fun dismissUpdateDialog() {
+        if (_updateDownloadProgress.value == null) {
+            _availableUpdate.value = null
+        }
+    }
+
+    fun downloadAndInstallUpdate() {
+        val update = _availableUpdate.value ?: return
+        val url = update.apkDownloadUrl
+        if (url.isNullOrBlank()) {
+            openUrlInBrowser(update.releaseHtmlUrl)
+            return
+        }
+        viewModelScope.launch {
+            try {
+                _updateDownloadProgress.value = 0.01f
+                _updateStatusMessage.value = "Baixando ${update.tagName} do GitHub..."
+                val apkFile = GitHubUpdater.downloadUpdateApk(app, url) { downloaded, total ->
+                    _updateDownloadProgress.value = if (total > 0) {
+                        (downloaded.toFloat() / total.toFloat()).coerceIn(0.01f, 0.99f)
+                    } else {
+                        0.5f
+                    }
+                }
+                _updateDownloadProgress.value = null
+                _updateStatusMessage.value = "Abrindo instalador do Android..."
+                val installIntent = GitHubUpdater.buildInstallApkIntent(app, apkFile)
+                app.startActivity(installIntent)
+            } catch (t: Throwable) {
+                _updateDownloadProgress.value = null
+                _updateStatusMessage.value = "Erro ao baixar atualização: ${t.message}"
+                openUrlInBrowser(update.releaseHtmlUrl)
+            }
+        }
+    }
+
+    fun openUrlInBrowser(url: String) {
+        try {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            app.startActivity(intent)
+        } catch (_: Throwable) {
+            // ignore
         }
     }
 

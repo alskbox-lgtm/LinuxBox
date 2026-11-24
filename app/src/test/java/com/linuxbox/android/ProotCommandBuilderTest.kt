@@ -79,4 +79,13 @@ class ProotCommandBuilderTest {
         assertEquals(1, aptParsed.size)
         assertEquals("ripgrep", aptParsed[0].packageName)
     }
+
+    @Test
+    fun githubUpdaterComparesSemanticVersionsCorrectly() {
+        assertTrue(com.linuxbox.android.core.GitHubUpdater.isNewerVersion("1.0.5", "1.0.4"))
+        assertTrue(com.linuxbox.android.core.GitHubUpdater.isNewerVersion("v1.1.0", "1.0.9"))
+        assertTrue(com.linuxbox.android.core.GitHubUpdater.isNewerVersion("2.0.0", "1.9.9"))
+        assertFalse(com.linuxbox.android.core.GitHubUpdater.isNewerVersion("1.0.5", "1.0.5"))
+        assertFalse(com.linuxbox.android.core.GitHubUpdater.isNewerVersion("1.0.4", "1.0.5"))
+    }
 }
