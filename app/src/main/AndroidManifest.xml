@@ -36,6 +36,34 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="application/vnd.debian.binary-package" />
+                <data android:mimeType="application/x-deb" />
+                <data android:mimeType="application/x-debian-package" />
+                <data android:mimeType="application/x-rpm" />
+                <data android:mimeType="application/x-sh" />
+                <data android:mimeType="text/x-shellscript" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:host="*" />
+                <data android:mimeType="*/*" />
+                <data android:pathPattern=".*\\.deb" />
+                <data android:pathPattern=".*\\.rpm" />
+                <data android:pathPattern=".*\\.sh" />
+                <data android:pathPattern=".*\\.run" />
+                <data android:pathPattern=".*\\.AppImage" />
+                <data android:pathPattern=".*\\.appimage" />
+            </intent-filter>
         </activity>
 
         <service

@@ -1,6 +1,8 @@
 package com.linuxbox.android.ui
 
 import android.app.Application
+import android.net.Uri
+import android.provider.OpenableColumns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.linuxbox.android.LinuxBoxApp
@@ -8,16 +10,21 @@ import com.linuxbox.android.core.DistroDefinition
 import com.linuxbox.android.core.DistroInstallState
 import com.linuxbox.android.core.LinuxProgram
 import com.linuxbox.android.core.PackageCatalog
+import com.linuxbox.android.core.PackageManagerType
 import com.linuxbox.android.core.ProgramCategory
 import com.linuxbox.android.core.RepoSearchResult
 import com.linuxbox.android.core.SetupProgress
 import com.linuxbox.android.service.LinuxSessionService
 import com.linuxbox.android.terminal.TerminalSession
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileOutputStream
 
 enum class MainTab(val label: String) {
     TERMINAL("Terminal"),
@@ -103,6 +110,7 @@ class LinuxBoxViewModel(application: Application) : AndroidViewModel(application
     val disableSeccomp: StateFlow<Boolean> = _disableSeccomp.asStateFlow()
 
     private var activeConsoleJob: Job? = null
+    private var pendingInstallerUri: Uri? = null
 
     init {
         bootstrap()
@@ -125,6 +133,10 @@ class LinuxBoxViewModel(application: Application) : AndroidViewModel(application
                 _isBootstrapping.value = false
                 refreshInstalledPackages()
                 desktopController.refreshInstalledState()
+                pendingInstallerUri?.let { uri ->
+                    pendingInstallerUri = null
+                    handleInstallerUri(uri)
+                }
             } catch (t: Throwable) {
                 _bootstrapError.value = t.message ?: "Erro inesperado ao inicializar o sistema Linux."
                 _isBootstrapping.value = false
@@ -296,6 +308,92 @@ class LinuxBoxViewModel(application: Application) : AndroidViewModel(application
 
     fun stopDesktop() {
         desktopController.stopDesktop()
+    }
+
+    fun handleInstallerUri(uri: Uri) {
+        if (_isBootstrapping.value) {
+            pendingInstallerUri = uri
+            return
+        }
+        viewModelScope.launch {
+            try {
+                val distro = _activeDistro.value
+                val rootfsTmp = File(distroManager.rootfsDir(distro.id), "tmp").apply { mkdirs() }
+                val rawName = resolveDisplayName(uri) ?: "instalador_linux"
+                val safeName = rawName.replace(Regex("[^a-zA-Z0-9._-]"), "_")
+                val destFile = File(rootfsTmp, "linuxbox_inst_$safeName")
+
+                withContext(Dispatchers.IO) {
+                    app.contentResolver.openInputStream(uri)?.use { input ->
+                        FileOutputStream(destFile).use { output ->
+                            input.copyTo(output, bufferSize = 64 * 1024)
+                        }
+                    } ?: throw IllegalStateException("Não foi possível ler o arquivo selecionado.")
+                }
+
+                val guestPath = "/tmp/${destFile.name}"
+                val lower = safeName.lowercase()
+                val cmd = when {
+                    lower.endsWith(".deb") -> {
+                        when (distro.packageManager) {
+                            PackageManagerType.APT ->
+                                "dpkg -i '$guestPath' || (apt-get update && apt-get install -f -y)"
+                            else ->
+                                "echo 'Pacotes .deb são para Ubuntu ou Debian.' && echo 'Vá na aba Sistemas, ative Ubuntu ou Debian e abra o arquivo novamente.' && exit 1"
+                        }
+                    }
+                    lower.endsWith(".rpm") -> {
+                        when (distro.packageManager) {
+                            PackageManagerType.DNF -> "dnf install -y '$guestPath'"
+                            else -> "if command -v rpm >/dev/null 2>&1; then rpm -ivh '$guestPath'; else echo 'Pacotes .rpm são para Fedora.'; exit 1; fi"
+                        }
+                    }
+                    lower.endsWith(".apk") -> {
+                        "apk add --allow-untrusted '$guestPath'"
+                    }
+                    lower.endsWith(".pkg.tar.zst") || lower.endsWith(".pkg.tar.xz") -> {
+                        "pacman -U --noconfirm '$guestPath'"
+                    }
+                    lower.endsWith(".appimage") -> {
+                        "chmod +x '$guestPath' && APPIMAGE_EXTRACT_AND_RUN=1 '$guestPath'"
+                    }
+                    lower.endsWith(".sh") || lower.endsWith(".run") -> {
+                        "chmod +x '$guestPath' && sh '$guestPath'"
+                    }
+                    else -> {
+                        "chmod +x '$guestPath' && '$guestPath'"
+                    }
+                }
+
+                _selectedTab.value = MainTab.PROGRAMS
+                runConsoleTask(
+                    title = "Instalando $safeName",
+                    command = cmd,
+                    launchAfter = null
+                )
+            } catch (t: Throwable) {
+                _consoleTask.value = ConsoleTaskState(
+                    title = "Erro ao abrir instalador",
+                    commandPreview = uri.toString(),
+                    isRunning = false,
+                    exitCode = -1,
+                    lines = listOf("Falha ao abrir arquivo: ${t.message}")
+                )
+            }
+        }
+    }
+
+    private fun resolveDisplayName(uri: Uri): String? {
+        if (uri.scheme == "content") {
+            app.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+                ?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                        if (idx >= 0) return cursor.getString(idx)
+                    }
+                }
+        }
+        return uri.lastPathSegment?.substringAfterLast('/')
     }
 
     fun dismissConsoleTask() {

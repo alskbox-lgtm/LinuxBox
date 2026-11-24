@@ -46,6 +46,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -53,7 +54,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -89,7 +92,7 @@ fun DesktopScreen(
 
     val resolutions = listOf("800x480", "1024x600", "1280x720")
     var selectedRes by remember { mutableStateOf("1024x600") }
-    var rightClickMode by remember { mutableStateOf(false) }
+    var holdLeftButton by remember { mutableStateOf(false) }
     var showKeyInput by remember { mutableStateOf(false) }
     var showLogsDialog by remember { mutableStateOf(false) }
     var textToSend by remember { mutableStateOf("") }
@@ -189,10 +192,10 @@ fun DesktopScreen(
                             }
                         } else {
                             FilterChip(
-                                selected = rightClickMode,
-                                onClick = { rightClickMode = !rightClickMode },
+                                selected = holdLeftButton,
+                                onClick = { holdLeftButton = !holdLeftButton },
                                 leadingIcon = { Icon(Icons.Default.Mouse, null, modifier = Modifier.size(15.dp)) },
-                                label = { Text(if (rightClickMode) "Botão Direito" else "Botão Esquerdo", fontSize = 11.5.sp) }
+                                label = { Text(if (holdLeftButton) "Segurando Clique" else "Arrastar Janela", fontSize = 11.5.sp) }
                             )
                             FilterChip(
                                 selected = showKeyInput,
@@ -392,7 +395,7 @@ fun DesktopScreen(
                         VncCanvasView(
                             rfbClient = controller.rfbClient,
                             frameRevision = frameRev,
-                            rightClickMode = rightClickMode,
+                            holdLeftButton = holdLeftButton,
                             modifier = Modifier.fillMaxSize()
                         )
                     }
@@ -522,64 +525,89 @@ private fun DesktopLogsDialog(
 private fun VncCanvasView(
     rfbClient: RfbClient,
     frameRevision: Long,
-    rightClickMode: Boolean,
+    holdLeftButton: Boolean,
     modifier: Modifier = Modifier
 ) {
     var viewSize by remember { mutableStateOf(IntSize.Zero) }
     val bitmap = remember(frameRevision) { rfbClient.copyCurrentBitmap() }
     val (fbW, fbH) = rfbClient.framebufferSize()
 
-    fun mapOffsetToFb(pos: Offset): Pair<Int, Int>? {
-        if (viewSize.width <= 0 || viewSize.height <= 0 || fbW <= 0 || fbH <= 0) return null
-        val scale = min(viewSize.width.toFloat() / fbW, viewSize.height.toFloat() / fbH)
-        val drawW = fbW * scale
-        val drawH = fbH * scale
-        val offX = (viewSize.width - drawW) / 2f
-        val offY = (viewSize.height - drawH) / 2f
-        val fx = ((pos.x - offX) / scale).roundToInt().coerceIn(0, fbW - 1)
-        val fy = ((pos.y - offY) / scale).roundToInt().coerceIn(0, fbH - 1)
-        return fx to fy
+    var cursorX by remember(fbW, fbH) {
+        mutableFloatStateOf(if (fbW > 0) fbW / 2f else 0f)
+    }
+    var cursorY by remember(fbW, fbH) {
+        mutableFloatStateOf(if (fbH > 0) fbH / 2f else 0f)
     }
 
-    val activeMask = if (rightClickMode) 4 else 1
+    fun currentScale(): Float {
+        if (viewSize.width <= 0 || viewSize.height <= 0 || fbW <= 0 || fbH <= 0) return 1f
+        return min(viewSize.width.toFloat() / fbW, viewSize.height.toFloat() / fbH)
+    }
 
     Canvas(
         modifier = modifier
             .background(Color.Black)
             .onSizeChanged { viewSize = it }
-            .pointerInput(fbW, fbH, rightClickMode) {
+            .pointerInput(fbW, fbH) {
                 detectTapGestures(
-                    onTap = { offset ->
-                        val (x, y) = mapOffsetToFb(offset) ?: return@detectTapGestures
-                        rfbClient.sendPointerEvent(x, y, activeMask)
-                        rfbClient.sendPointerEvent(x, y, 0)
+                    onTap = {
+                        if (fbW <= 0 || fbH <= 0) return@detectTapGestures
+                        val cx = cursorX.roundToInt().coerceIn(0, fbW - 1)
+                        val cy = cursorY.roundToInt().coerceIn(0, fbH - 1)
+                        rfbClient.sendPointerEvent(cx, cy, 1) // 1 clique = botão esquerdo
+                        rfbClient.sendPointerEvent(cx, cy, 0)
                     },
-                    onDoubleTap = { offset ->
-                        val (x, y) = mapOffsetToFb(offset) ?: return@detectTapGestures
-                        rfbClient.sendPointerEvent(x, y, 1)
-                        rfbClient.sendPointerEvent(x, y, 0)
-                        rfbClient.sendPointerEvent(x, y, 1)
-                        rfbClient.sendPointerEvent(x, y, 0)
+                    onDoubleTap = {
+                        if (fbW <= 0 || fbH <= 0) return@detectTapGestures
+                        val cx = cursorX.roundToInt().coerceIn(0, fbW - 1)
+                        val cy = cursorY.roundToInt().coerceIn(0, fbH - 1)
+                        rfbClient.sendPointerEvent(cx, cy, 4) // 2 cliques = botão direito
+                        rfbClient.sendPointerEvent(cx, cy, 0)
                     },
-                    onLongPress = { offset ->
-                        val (x, y) = mapOffsetToFb(offset) ?: return@detectTapGestures
-                        rfbClient.sendPointerEvent(x, y, 4) // right-click context menu in Fluxbox
-                        rfbClient.sendPointerEvent(x, y, 0)
+                    onLongPress = {
+                        if (fbW <= 0 || fbH <= 0) return@detectTapGestures
+                        val cx = cursorX.roundToInt().coerceIn(0, fbW - 1)
+                        val cy = cursorY.roundToInt().coerceIn(0, fbH - 1)
+                        // Segurar = duplo clique esquerdo (para abrir ícones/pastas)
+                        rfbClient.sendPointerEvent(cx, cy, 1)
+                        rfbClient.sendPointerEvent(cx, cy, 0)
+                        rfbClient.sendPointerEvent(cx, cy, 1)
+                        rfbClient.sendPointerEvent(cx, cy, 0)
                     }
                 )
             }
-            .pointerInput(fbW, fbH) {
+            .pointerInput(fbW, fbH, holdLeftButton) {
                 detectDragGestures(
-                    onDragStart = { offset ->
-                        val (x, y) = mapOffsetToFb(offset) ?: return@detectDragGestures
-                        rfbClient.sendPointerEvent(x, y, 1)
+                    onDragStart = {
+                        if (fbW <= 0 || fbH <= 0) return@detectDragGestures
+                        val cx = cursorX.roundToInt().coerceIn(0, fbW - 1)
+                        val cy = cursorY.roundToInt().coerceIn(0, fbH - 1)
+                        rfbClient.sendPointerEvent(cx, cy, if (holdLeftButton) 1 else 0)
                     },
                     onDragEnd = {
-                        rfbClient.sendPointerEvent(0, 0, 0)
+                        if (fbW <= 0 || fbH <= 0) return@detectDragGestures
+                        val cx = cursorX.roundToInt().coerceIn(0, fbW - 1)
+                        val cy = cursorY.roundToInt().coerceIn(0, fbH - 1)
+                        rfbClient.sendPointerEvent(cx, cy, 0)
                     },
-                    onDrag = { change, _ ->
-                        val (x, y) = mapOffsetToFb(change.position) ?: return@detectDragGestures
-                        rfbClient.sendPointerEvent(x, y, 1)
+                    onDragCancel = {
+                        if (fbW <= 0 || fbH <= 0) return@detectDragGestures
+                        val cx = cursorX.roundToInt().coerceIn(0, fbW - 1)
+                        val cy = cursorY.roundToInt().coerceIn(0, fbH - 1)
+                        rfbClient.sendPointerEvent(cx, cy, 0)
+                    },
+                    onDrag = { change, dragAmount ->
+                        change.consume()
+                        if (fbW <= 0 || fbH <= 0) return@detectDragGestures
+                        val scale = currentScale().coerceAtLeast(0.1f)
+                        val sensitivity = 1.25f
+                        cursorX = (cursorX + (dragAmount.x / scale) * sensitivity)
+                            .coerceIn(0f, (fbW - 1).toFloat())
+                        cursorY = (cursorY + (dragAmount.y / scale) * sensitivity)
+                            .coerceIn(0f, (fbH - 1).toFloat())
+                        val cx = cursorX.roundToInt().coerceIn(0, fbW - 1)
+                        val cy = cursorY.roundToInt().coerceIn(0, fbH - 1)
+                        rfbClient.sendPointerEvent(cx, cy, if (holdLeftButton) 1 else 0)
                     }
                 )
             }
@@ -595,6 +623,22 @@ private fun VncCanvasView(
                 dstOffset = IntOffset(offX, offY),
                 dstSize = IntSize(dstW, dstH)
             )
+
+            // Draw crisp virtual mouse cursor overlay at exact pointer position
+            val px = offX + cursorX * scale
+            val py = offY + cursorY * scale
+            val pointerPath = Path().apply {
+                moveTo(px, py)
+                lineTo(px, py + 24f)
+                lineTo(px + 6.5f, py + 18.5f)
+                lineTo(px + 12f, py + 28f)
+                lineTo(px + 15.5f, py + 26f)
+                lineTo(px + 10f, py + 16.5f)
+                lineTo(px + 17.5f, py + 16.5f)
+                close()
+            }
+            drawPath(path = pointerPath, color = Color.White)
+            drawPath(path = pointerPath, color = Color.Black, style = Stroke(width = 2.2f))
         }
     }
 }

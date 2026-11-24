@@ -1,5 +1,7 @@
 package com.linuxbox.android.ui.store
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
@@ -25,6 +27,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
@@ -72,6 +75,14 @@ fun ProgramsScreen(
     val isRefreshing by viewModel.isRefreshingPackages.collectAsState()
     val repoResults by viewModel.repoSearchResults.collectAsState()
     val isSearchingRepo by viewModel.isSearchingRepo.collectAsState()
+
+    val pickInstaller = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            viewModel.handleInstallerUri(uri)
+        }
+    }
 
     val filteredPrograms = PackageCatalog.programs.filter { prog ->
         val matchesCategory = selectedCategory == ProgramCategory.ALL || prog.category == selectedCategory
@@ -140,6 +151,30 @@ fun ProgramsScreen(
                             Text("Atualizar", color = LinuxBoxColors.Primary, fontSize = 12.sp)
                         }
                     }
+                }
+
+                Spacer(Modifier.height(8.dp))
+
+                OutlinedButton(
+                    onClick = { pickInstaller.launch(arrayOf("*/*")) },
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    border = BorderStroke(1.dp, LinuxBoxColors.Secondary.copy(alpha = 0.65f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(
+                        Icons.Default.FolderOpen,
+                        null,
+                        tint = LinuxBoxColors.Secondary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        "Abrir instalador local (.deb, .rpm, .sh, .AppImage)",
+                        color = LinuxBoxColors.Secondary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium
+                    )
                 }
 
                 Spacer(Modifier.height(10.dp))

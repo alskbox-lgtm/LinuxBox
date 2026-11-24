@@ -1,6 +1,7 @@
 package com.linuxbox.android
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -33,9 +34,25 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        handleViewIntent(intent)
+
         setContent {
             LinuxBoxTheme {
                 LinuxBoxRoot(viewModel = viewModel)
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleViewIntent(intent)
+    }
+
+    private fun handleViewIntent(intent: Intent?) {
+        if (intent?.action == Intent.ACTION_VIEW) {
+            intent.data?.let { uri ->
+                viewModel.handleInstallerUri(uri)
             }
         }
     }
