@@ -1,0 +1,39 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Terminal window frame -->
+    <path
+        android:fillColor="#131B24"
+        android:strokeColor="#22C55E"
+        android:strokeWidth="3"
+        android:pathData="M26,28 h56 a6,6 0 0 1 6,6 v40 a6,6 0 0 1 -6,6 h-56 a6,6 0 0 1 -6,-6 v-40 a6,6 0 0 1 6,-6 z" />
+    <!-- Top window bar -->
+    <path
+        android:fillColor="#1D2936"
+        android:pathData="M26,28 h56 a6,6 0 0 1 6,6 v8 h-68 v-8 a6,6 0 0 1 6,-6 z" />
+    <!-- Window dots -->
+    <path
+        android:fillColor="#EF4444"
+        android:pathData="M30,35 m-2.2,0 a2.2,2.2 0 1,0 4.4,0 a2.2,2.2 0 1,0 -4.4,0" />
+    <path
+        android:fillColor="#F59E0B"
+        android:pathData="M37,35 m-2.2,0 a2.2,2.2 0 1,0 4.4,0 a2.2,2.2 0 1,0 -4.4,0" />
+    <path
+        android:fillColor="#22C55E"
+        android:pathData="M44,35 m-2.2,0 a2.2,2.2 0 1,0 4.4,0 a2.2,2.2 0 1,0 -4.4,0" />
+    <!-- Prompt chevron > -->
+    <path
+        android:strokeColor="#22C55E"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M33,53 L45,61 L33,69" />
+    <!-- Cursor underscore _ -->
+    <path
+        android:strokeColor="#38BDF8"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round"
+        android:pathData="M53,69 L72,69" />
+</vector>

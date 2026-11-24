@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">LinuxBox</string>
+    <string name="notification_channel_name">Sessões Linux Ativas</string>
+    <string name="notification_channel_desc">Mantém o ambiente Linux, servidores e instalações em execução em segundo plano.</string>
+</resources>
