@@ -48,7 +48,11 @@
                 <data android:mimeType="application/x-debian-package" />
                 <data android:mimeType="application/x-rpm" />
                 <data android:mimeType="application/x-sh" />
+                <data android:mimeType="application/x-shellscript" />
                 <data android:mimeType="text/x-shellscript" />
+                <data android:mimeType="application/octet-stream" />
+                <data android:mimeType="application/x-executable" />
+                <data android:mimeType="application/x-appimage" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
@@ -64,6 +68,11 @@
                 <data android:pathPattern=".*\\.run" />
                 <data android:pathPattern=".*\\.AppImage" />
                 <data android:pathPattern=".*\\.appimage" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
             </intent-filter>
         </activity>
 

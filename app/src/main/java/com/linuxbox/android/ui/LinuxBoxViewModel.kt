@@ -3,7 +3,9 @@ package com.linuxbox.android.ui
 import android.app.Application
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.provider.OpenableColumns
+import android.provider.Settings
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.linuxbox.android.BuildConfig
@@ -114,6 +116,9 @@ class LinuxBoxViewModel(application: Application) : AndroidViewModel(application
     val consoleTask: StateFlow<ConsoleTaskState?> = _consoleTask.asStateFlow()
 
     // Installer mode chooser (Terminal CLI vs Graphical UI)
+    private val _preparingInstallerName = MutableStateFlow<String?>(null)
+    val preparingInstallerName: StateFlow<String?> = _preparingInstallerName.asStateFlow()
+
     private val _pendingInstallerPrompt = MutableStateFlow<PendingInstallerPrompt?>(null)
     val pendingInstallerPrompt: StateFlow<PendingInstallerPrompt?> = _pendingInstallerPrompt.asStateFlow()
 
@@ -361,9 +366,11 @@ class LinuxBoxViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             try {
                 val distro = _activeDistro.value
-                val rootfsTmp = File(distroManager.rootfsDir(distro.id), "tmp").apply { mkdirs() }
                 val rawName = resolveDisplayName(uri) ?: "instalador_linux"
                 val safeName = rawName.replace(Regex("[^a-zA-Z0-9._-]"), "_")
+                _preparingInstallerName.value = safeName
+
+                val rootfsTmp = File(distroManager.rootfsDir(distro.id), "tmp").apply { mkdirs() }
                 val destFile = File(rootfsTmp, "linuxbox_inst_$safeName")
 
                 withContext(Dispatchers.IO) {
@@ -374,12 +381,14 @@ class LinuxBoxViewModel(application: Application) : AndroidViewModel(application
                     } ?: throw IllegalStateException("Não foi possível ler o arquivo selecionado.")
                 }
 
+                _preparingInstallerName.value = null
                 _pendingInstallerPrompt.value = PendingInstallerPrompt(
                     fileName = safeName,
                     guestPath = "/tmp/${destFile.name}",
                     distro = distro
                 )
             } catch (t: Throwable) {
+                _preparingInstallerName.value = null
                 _consoleTask.value = ConsoleTaskState(
                     title = "Erro ao abrir instalador",
                     commandPreview = uri.toString(),
@@ -398,24 +407,27 @@ class LinuxBoxViewModel(application: Application) : AndroidViewModel(application
     fun executePendingInstallerInTerminal() {
         val prompt = _pendingInstallerPrompt.value ?: return
         _pendingInstallerPrompt.value = null
-        val cmd = buildInstallerCommand(prompt.fileName, prompt.guestPath, prompt.distro)
-        runCommandInTerminal(cmd, mode = TerminalMode.STANDALONE)
+        val hostFile = File(distroManager.rootfsDir(prompt.distro.id), prompt.guestPath.trimStart('/'))
+        val cmd = buildInstallerCommand(prompt.fileName, prompt.guestPath, prompt.distro, hostFile)
+        _selectedTab.value = MainTab.TERMINAL
+        createNewTerminalSession(mode = TerminalMode.STANDALONE, initialCommand = cmd)
     }
 
     fun executePendingInstallerInGui() {
         val prompt = _pendingInstallerPrompt.value ?: return
         _pendingInstallerPrompt.value = null
-        val cmd = buildInstallerCommand(prompt.fileName, prompt.guestPath, prompt.distro)
+        val hostFile = File(distroManager.rootfsDir(prompt.distro.id), prompt.guestPath.trimStart('/'))
+        val cmd = buildInstallerCommand(prompt.fileName, prompt.guestPath, prompt.distro, hostFile)
         val lower = prompt.fileName.lowercase()
 
         viewModelScope.launch {
             _selectedTab.value = MainTab.DESKTOP
             desktopController.refreshInstalledState()
             if (!desktopController.isDesktopInstalled.value) {
-                // Desktop GUI not installed yet -> run inside Desktop-UI terminal branch with guidance
-                runCommandInTerminal(
-                    "echo 'Desktop Gráfico ainda não instalado. Instalando ou rode na aba Desktop.' && $cmd",
-                    mode = TerminalMode.DESKTOP_UI
+                _selectedTab.value = MainTab.TERMINAL
+                createNewTerminalSession(
+                    mode = TerminalMode.DESKTOP_UI,
+                    initialCommand = "echo 'Desktop Gráfico ainda não instalado. Executando no Terminal da UI Gráfica...' && $cmd"
                 )
                 return@launch
             }
@@ -436,11 +448,32 @@ class LinuxBoxViewModel(application: Application) : AndroidViewModel(application
     private fun buildInstallerCommand(
         safeName: String,
         guestPath: String,
-        distro: DistroDefinition
+        distro: DistroDefinition,
+        hostFile: File
     ): String {
         val lower = safeName.lowercase()
+        val header = ByteArray(16)
+        val headerRead = try {
+            hostFile.inputStream().use { it.read(header) }
+        } catch (_: Throwable) {
+            0
+        }
+        val headerAscii = if (headerRead > 0) String(header, 0, headerRead, Charsets.ISO_8859_1) else ""
+        val isDebMagic = headerAscii.startsWith("!<arch>\n")
+        val isRpmMagic = headerRead >= 4 &&
+            (header[0].toInt() and 0xFF) == 0xED &&
+            (header[1].toInt() and 0xFF) == 0xAB &&
+            (header[2].toInt() and 0xFF) == 0xEE &&
+            (header[3].toInt() and 0xFF) == 0xDB
+        val isScriptMagic = headerAscii.startsWith("#!")
+        val isElfMagic = headerRead >= 4 &&
+            header[0] == 0x7F.toByte() &&
+            header[1] == 'E'.code.toByte() &&
+            header[2] == 'L'.code.toByte() &&
+            header[3] == 'F'.code.toByte()
+
         return when {
-            lower.endsWith(".deb") -> {
+            lower.endsWith(".deb") || isDebMagic -> {
                 when (distro.packageManager) {
                     PackageManagerType.APT ->
                         "dpkg -i '$guestPath' || (apt-get update && apt-get install -f -y)"
@@ -448,7 +481,7 @@ class LinuxBoxViewModel(application: Application) : AndroidViewModel(application
                         "echo 'Pacotes .deb são para Ubuntu ou Debian.' && echo 'Vá na aba Sistemas, ative Ubuntu ou Debian e abra o arquivo novamente.' && exit 1"
                 }
             }
-            lower.endsWith(".rpm") -> {
+            lower.endsWith(".rpm") || isRpmMagic -> {
                 when (distro.packageManager) {
                     PackageManagerType.DNF -> "dnf install -y '$guestPath'"
                     else -> "if command -v rpm >/dev/null 2>&1; then rpm -ivh '$guestPath'; else echo 'Pacotes .rpm são para Fedora.'; exit 1; fi"
@@ -460,10 +493,10 @@ class LinuxBoxViewModel(application: Application) : AndroidViewModel(application
             lower.endsWith(".pkg.tar.zst") || lower.endsWith(".pkg.tar.xz") -> {
                 "pacman -U --noconfirm '$guestPath'"
             }
-            lower.endsWith(".appimage") -> {
+            lower.endsWith(".appimage") || isElfMagic -> {
                 "chmod +x '$guestPath' && APPIMAGE_EXTRACT_AND_RUN=1 '$guestPath'"
             }
-            lower.endsWith(".sh") || lower.endsWith(".run") -> {
+            lower.endsWith(".sh") || lower.endsWith(".run") || isScriptMagic -> {
                 "chmod +x '$guestPath' && sh '$guestPath'"
             }
             else -> {
@@ -505,6 +538,20 @@ class LinuxBoxViewModel(application: Application) : AndroidViewModel(application
         }
         viewModelScope.launch {
             try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                    !app.packageManager.canRequestPackageInstalls()
+                ) {
+                    _updateStatusMessage.value = "Permita instalar apps pelo LinuxBox nas configurações e tente novamente."
+                    val permIntent = Intent(
+                        Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        Uri.parse("package:${app.packageName}")
+                    ).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    app.startActivity(permIntent)
+                    return@launch
+                }
+
                 _updateDownloadProgress.value = 0.01f
                 _updateStatusMessage.value = "Baixando ${update.tagName} do GitHub..."
                 val apkFile = GitHubUpdater.downloadUpdateApk(app, url) { downloaded, total ->

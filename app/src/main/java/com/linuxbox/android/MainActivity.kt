@@ -3,6 +3,7 @@ package com.linuxbox.android
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -34,7 +35,7 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        handleViewIntent(intent)
+        handleIncomingIntent(intent)
 
         setContent {
             LinuxBoxTheme {
@@ -46,14 +47,22 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        handleViewIntent(intent)
+        handleIncomingIntent(intent)
     }
 
-    private fun handleViewIntent(intent: Intent?) {
-        if (intent?.action == Intent.ACTION_VIEW) {
-            intent.data?.let { uri ->
-                viewModel.handleInstallerUri(uri)
+    private fun handleIncomingIntent(intent: Intent?) {
+        if (intent == null) return
+        val uri: Uri? = when (intent.action) {
+            Intent.ACTION_VIEW -> intent.data ?: intent.clipData?.getItemAt(0)?.uri
+            Intent.ACTION_SEND -> {
+                @Suppress("DEPRECATION")
+                intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+                    ?: intent.clipData?.getItemAt(0)?.uri
             }
+            else -> null
+        }
+        if (uri != null) {
+            viewModel.handleInstallerUri(uri)
         }
     }
 }

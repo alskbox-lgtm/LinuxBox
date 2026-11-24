@@ -71,6 +71,7 @@ fun LinuxBoxRoot(viewModel: LinuxBoxViewModel) {
     val bootstrapError by viewModel.bootstrapError.collectAsState()
     val selectedTab by viewModel.selectedTab.collectAsState()
     val consoleTask by viewModel.consoleTask.collectAsState()
+    val preparingInstallerName by viewModel.preparingInstallerName.collectAsState()
     val pendingInstaller by viewModel.pendingInstallerPrompt.collectAsState()
     val availableUpdate by viewModel.availableUpdate.collectAsState()
     val updateDownloadProgress by viewModel.updateDownloadProgress.collectAsState()
@@ -147,6 +148,64 @@ fun LinuxBoxRoot(viewModel: LinuxBoxViewModel) {
                 viewModel.runCommandInTerminal(cmd)
             }
         )
+    }
+
+    preparingInstallerName?.let { fileName ->
+        Dialog(onDismissRequest = {}) {
+            Surface(
+                color = LinuxBoxColors.Surface,
+                shape = RoundedCornerShape(14.dp),
+                border = BorderStroke(1.dp, LinuxBoxColors.Border),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(18.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        strokeWidth = 2.5.dp,
+                        color = LinuxBoxColors.Secondary
+                    )
+                    Column {
+                        Text(
+                            text = "Preparando instalador...",
+                            color = LinuxBoxColors.TextPrimary,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp
+                        )
+                        Text(
+                            text = fileName,
+                            color = LinuxBoxColors.TextSecondary,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    pendingInstaller?.let { prompt ->
+        InstallerModeDialog(
+            prompt = prompt,
+            onRunInGui = { viewModel.executePendingInstallerInGui() },
+            onRunInTerminal = { viewModel.executePendingInstallerInTerminal() },
+            onDismiss = { viewModel.dismissPendingInstaller() }
+        )
+    }
+
+    if (pendingInstaller == null && preparingInstallerName == null) {
+        availableUpdate?.let { update ->
+            AppUpdateDialog(
+                update = update,
+                downloadProgress = updateDownloadProgress,
+                onDownloadAndInstall = { viewModel.downloadAndInstallUpdate() },
+                onOpenGitHub = { viewModel.openUrlInBrowser(update.releaseHtmlUrl) },
+                onDismiss = { viewModel.dismissUpdateDialog() }
+            )
+        }
     }
 }
 
