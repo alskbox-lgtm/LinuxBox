@@ -1,5 +1,6 @@
 package com.linuxbox.android.ui.desktop
 
+import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -18,10 +19,15 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Article
 import androidx.compose.material.icons.filled.Computer
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.Mouse
@@ -37,6 +43,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -49,12 +56,17 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.linuxbox.android.desktop.RfbClient
 import com.linuxbox.android.ui.LinuxBoxViewModel
 import com.linuxbox.android.ui.theme.LinuxBoxColors
@@ -70,6 +82,7 @@ fun DesktopScreen(
     val isInstalled by controller.isDesktopInstalled.collectAsState()
     val isRunning by controller.isServerRunning.collectAsState()
     val statusLog by controller.statusLog.collectAsState()
+    val desktopLogs by controller.desktopLogs.collectAsState()
     val rfbState by controller.rfbClient.state.collectAsState()
     val frameRev by controller.rfbClient.frameRevision.collectAsState()
     val activeDistro by viewModel.activeDistro.collectAsState()
@@ -78,6 +91,7 @@ fun DesktopScreen(
     var selectedRes by remember { mutableStateOf("1024x600") }
     var rightClickMode by remember { mutableStateOf(false) }
     var showKeyInput by remember { mutableStateOf(false) }
+    var showLogsDialog by remember { mutableStateOf(false) }
     var textToSend by remember { mutableStateOf("") }
 
     Column(
@@ -105,11 +119,15 @@ fun DesktopScreen(
                         )
                         Text(
                             text = statusLog,
-                            color = LinuxBoxColors.TextSecondary,
-                            fontSize = 11.5.sp,
-                            maxLines = 1
+                            color = if (statusLog.contains("Erro", ignoreCase = true) ||
+                                statusLog.contains("não respondeu", ignoreCase = true)
+                            ) LinuxBoxColors.Warning else LinuxBoxColors.TextSecondary,
+                            fontSize = 12.sp,
+                            maxLines = 3
                         )
                     }
+
+                    Spacer(Modifier.width(8.dp))
 
                     if (isInstalled) {
                         if (isRunning) {
@@ -147,6 +165,20 @@ fun DesktopScreen(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        OutlinedButton(
+                            onClick = { showLogsDialog = true },
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                            border = BorderStroke(
+                                1.dp,
+                                if (desktopLogs.isNotEmpty()) LinuxBoxColors.Secondary else LinuxBoxColors.Border
+                            )
+                        ) {
+                            Icon(Icons.Default.Article, null, tint = LinuxBoxColors.Secondary, modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Ver Logs (${desktopLogs.size})", color = LinuxBoxColors.Secondary, fontSize = 11.5.sp)
+                        }
+
                         if (!isRunning) {
                             resolutions.forEach { res ->
                                 FilterChip(
@@ -233,7 +265,7 @@ fun DesktopScreen(
             }
         }
 
-        // Main desktop viewport or onboarding card
+        // Main desktop viewport or inline diagnostic log view
         Box(
             modifier = Modifier
                 .weight(1f)
@@ -293,26 +325,36 @@ fun DesktopScreen(
             } else {
                 when (val state = rfbState) {
                     is RfbClient.ConnectionState.Disconnected -> {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
-                            Icon(
-                                Icons.Default.Computer,
-                                null,
-                                tint = LinuxBoxColors.Primary,
-                                modifier = Modifier.size(44.dp)
+                        if (desktopLogs.isNotEmpty() && !isRunning) {
+                            // Show full scrollable diagnostic log directly in the large viewport area
+                            InlineDesktopLogPanel(
+                                logs = desktopLogs,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(12.dp)
                             )
-                            Spacer(Modifier.height(10.dp))
-                            Text(
-                                text = "Desktop Linux pronto para iniciar",
-                                color = LinuxBoxColors.TextPrimary,
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Spacer(Modifier.height(6.dp))
-                            Text(
-                                text = "Toque em Iniciar acima para abrir o Fluxbox X11 em $selectedRes com visualizador VNC integrado.",
-                                color = LinuxBoxColors.TextSecondary,
-                                fontSize = 12.5.sp
-                            )
+                        } else {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
+                                Icon(
+                                    Icons.Default.Computer,
+                                    null,
+                                    tint = LinuxBoxColors.Primary,
+                                    modifier = Modifier.size(44.dp)
+                                )
+                                Spacer(Modifier.height(10.dp))
+                                Text(
+                                    text = "Desktop Linux pronto para iniciar",
+                                    color = LinuxBoxColors.TextPrimary,
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Spacer(Modifier.height(6.dp))
+                                Text(
+                                    text = "Toque em Iniciar acima para abrir o Fluxbox X11 em $selectedRes com visualizador VNC integrado.",
+                                    color = LinuxBoxColors.TextSecondary,
+                                    fontSize = 12.5.sp
+                                )
+                            }
                         }
                     }
 
@@ -325,11 +367,23 @@ fun DesktopScreen(
                     }
 
                     is RfbClient.ConnectionState.Error -> {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(14.dp)
+                        ) {
                             Text("Conexão VNC: ${state.message}", color = LinuxBoxColors.Warning, fontSize = 13.sp)
-                            Spacer(Modifier.height(12.dp))
+                            Spacer(Modifier.height(8.dp))
                             Button(onClick = { viewModel.startDesktop(selectedRes) }) {
                                 Text("Reiniciar Desktop")
+                            }
+                            Spacer(Modifier.height(10.dp))
+                            if (desktopLogs.isNotEmpty()) {
+                                InlineDesktopLogPanel(
+                                    logs = desktopLogs,
+                                    modifier = Modifier.weight(1f).fillMaxWidth()
+                                )
                             }
                         }
                     }
@@ -341,6 +395,122 @@ fun DesktopScreen(
                             rightClickMode = rightClickMode,
                             modifier = Modifier.fillMaxSize()
                         )
+                    }
+                }
+            }
+        }
+    }
+
+    if (showLogsDialog) {
+        DesktopLogsDialog(
+            logs = desktopLogs,
+            onDismiss = { showLogsDialog = false }
+        )
+    }
+}
+
+@Composable
+private fun InlineDesktopLogPanel(
+    logs: List<String>,
+    modifier: Modifier = Modifier
+) {
+    val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
+    val listState = rememberLazyListState()
+
+    LaunchedEffect(logs.size) {
+        if (logs.isNotEmpty()) {
+            listState.animateScrollToItem(logs.lastIndex)
+        }
+    }
+
+    Surface(
+        color = LinuxBoxColors.Surface,
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, LinuxBoxColors.Border),
+        modifier = modifier
+    ) {
+        Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "Log Completo do Servidor X11 / VNC",
+                    color = LinuxBoxColors.Secondary,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                OutlinedButton(
+                    onClick = {
+                        clipboard.setText(AnnotatedString(logs.joinToString("\n")))
+                        Toast.makeText(context, "Log copiado!", Toast.LENGTH_SHORT).show()
+                    },
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Icon(Icons.Default.ContentCopy, null, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Copiar", fontSize = 11.5.sp)
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            Surface(
+                color = LinuxBoxColors.Background,
+                shape = RoundedCornerShape(8.dp),
+                border = BorderStroke(1.dp, LinuxBoxColors.Border),
+                modifier = Modifier.weight(1f).fillMaxWidth()
+            ) {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize().padding(10.dp)
+                ) {
+                    items(logs) { line ->
+                        Text(
+                            text = line,
+                            color = if (line.contains("erro", ignoreCase = true) ||
+                                line.contains("fail", ignoreCase = true) ||
+                                line.contains("fatal", ignoreCase = true)
+                            ) Color(0xFFFCA5A5) else LinuxBoxColors.TextPrimary,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.5.sp,
+                            lineHeight = 16.sp
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DesktopLogsDialog(
+    logs: List<String>,
+    onDismiss: () -> Unit
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            color = LinuxBoxColors.Surface,
+            shape = RoundedCornerShape(16.dp),
+            border = BorderStroke(1.dp, LinuxBoxColors.Border),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(480.dp)
+                .padding(14.dp)
+        ) {
+            Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
+                InlineDesktopLogPanel(
+                    logs = if (logs.isEmpty()) listOf("Nenhum log registrado ainda. Toque em Iniciar primeiro.") else logs,
+                    modifier = Modifier.weight(1f).fillMaxWidth()
+                )
+                Spacer(Modifier.height(10.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    Button(onClick = onDismiss) {
+                        Text("Fechar")
                     }
                 }
             }
