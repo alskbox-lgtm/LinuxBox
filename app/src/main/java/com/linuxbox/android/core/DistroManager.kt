@@ -105,6 +105,7 @@ class DistroManager(private val context: Context) {
         guestWorkDir: String = "/root",
         extraEnv: Map<String, String> = emptyMap()
     ): ProotSpec {
+        migrateLegacyDisplayConfig(rootfsDir(distro.id))
         return ProotCommandBuilder.build(
             nativeLibDir = nativeLibDir,
             rootfsDir = rootfsDir(distro.id),
@@ -117,6 +118,25 @@ class DistroManager(private val context: Context) {
             disableSeccomp = disableSeccomp,
             extraEnv = extraEnv
         )
+    }
+
+    private fun migrateLegacyDisplayConfig(rootfs: File) {
+        val files = listOf(
+            File(rootfs, "etc/profile.d/linuxbox.sh"),
+            File(rootfs, "root/.profile"),
+            File(rootfs, "root/.bashrc")
+        )
+        for (f in files) {
+            if (!f.exists()) continue
+            try {
+                val text = f.readText()
+                if (text.contains("export DISPLAY=:1")) {
+                    f.writeText(text.replace("export DISPLAY=:1", "export DISPLAY=\"\${DISPLAY:-127.0.0.1:10}\""))
+                }
+            } catch (_: Throwable) {
+                // ignore
+            }
+        }
     }
 
     suspend fun listDistroStates(): List<DistroInstallState> = withContext(Dispatchers.IO) {
@@ -339,7 +359,7 @@ class DistroManager(private val context: Context) {
             export TERM=xterm-256color
             export COLORTERM=truecolor
             export LANG=C.UTF-8
-            export DISPLAY=:1
+            export DISPLAY="${'$'}{DISPLAY:-127.0.0.1:10}"
             export PS1='\[\e[1;32m\]root@linuxbox\[\e[0m\]:\[\e[1;36m\]\w\[\e[0m\]# '
             alias ll='ls -la --color=auto'
             alias la='ls -A --color=auto'
