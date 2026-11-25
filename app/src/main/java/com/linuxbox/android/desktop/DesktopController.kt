@@ -180,16 +180,51 @@ class DesktopController(
         }
     }
 
+    private val guiAppProcesses: MutableList<Process> = Collections.synchronizedList(mutableListOf())
+
     fun launchGuiApp(command: String) {
         try {
-            commandRunner.startBackgroundCommand("DISPLAY=127.0.0.1:10 nohup $command >/dev/null 2>&1 &")
-        } catch (_: Throwable) {
-            // ignore
+            val distro = distroManager.getActiveDistro()
+            appendLog("[GUI] Iniciando: $command")
+            val proc = commandRunner.startBackgroundCommand(
+                "export DISPLAY=127.0.0.1:10; $command",
+                distro = distro
+            )
+            guiAppProcesses.add(proc)
+            thread(name = "gui-app-drain", isDaemon = true) {
+                try {
+                    BufferedReader(InputStreamReader(proc.inputStream, Charsets.UTF_8)).use { reader ->
+                        var line: String? = reader.readLine()
+                        while (line != null) {
+                            if (line.isNotBlank()) {
+                                appendLog("[GUI] $line")
+                            }
+                            line = reader.readLine()
+                        }
+                    }
+                } catch (_: Throwable) {
+                    // process closed
+                } finally {
+                    guiAppProcesses.remove(proc)
+                }
+            }
+        } catch (t: Throwable) {
+            appendLog("[GUI] Erro ao iniciar app: ${t.message}")
         }
     }
 
     fun stopDesktop(keepStatus: Boolean = false) {
         rfbClient.disconnect()
+        synchronized(guiAppProcesses) {
+            guiAppProcesses.forEach { p ->
+                try {
+                    p.destroyForcibly()
+                } catch (_: Throwable) {
+                    // ignore
+                }
+            }
+            guiAppProcesses.clear()
+        }
         try {
             serverProcess?.destroyForcibly()
         } catch (_: Throwable) {

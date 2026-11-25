@@ -434,12 +434,13 @@ class LinuxBoxViewModel(application: Application) : AndroidViewModel(application
             if (!desktopController.isServerRunning.value) {
                 startForegroundServiceSafe("Desktop Linux (1024x600)")
                 desktopController.startDesktop("1024x600")
+                kotlinx.coroutines.delay(800)
             }
             val guiCommand = if (lower.endsWith(".appimage") || lower.endsWith(".run")) {
                 cmd
             } else {
                 val escaped = cmd.replace("'", "'\\''")
-                "xterm -geometry 92x28+24+24 -fa 'DejaVu Sans Mono' -fs 11 -bg '#0B0F14' -fg '#E6EDF3' -title 'Instalador: ${prompt.fileName}' -e sh -c '$escaped; echo; echo \"Concluído. Pressione Enter para fechar.\"; read _'"
+                "xterm -geometry 88x26+20+20 -bg '#0B0F14' -fg '#E6EDF3' -title 'Instalador: ${prompt.fileName}' -e sh -c 'echo \"=== Instalando ${prompt.fileName} ===\"; $escaped; echo; echo \"Concluido! Pressione Enter para fechar.\"; read _'"
             }
             desktopController.launchGuiApp(guiCommand)
         }
@@ -476,7 +477,10 @@ class LinuxBoxViewModel(application: Application) : AndroidViewModel(application
             lower.endsWith(".deb") || isDebMagic -> {
                 when (distro.packageManager) {
                     PackageManagerType.APT ->
-                        "dpkg -i '$guestPath' || (apt-get update && apt-get install -f -y)"
+                        "chmod 1777 /tmp 2>/dev/null || true; " +
+                            "dpkg -i '$guestPath' || " +
+                            "(apt-get -o APT::Sandbox::User=root update && apt-get -o APT::Sandbox::User=root install -f -y) || " +
+                            "(apt-get -o APT::Sandbox::User=root -o Acquire::AllowInsecureRepositories=true update && apt-get -o APT::Sandbox::User=root install -f -y --allow-unauthenticated)"
                     else ->
                         "echo 'Pacotes .deb são para Ubuntu ou Debian.' && echo 'Vá na aba Sistemas, ative Ubuntu ou Debian e abra o arquivo novamente.' && exit 1"
                 }
