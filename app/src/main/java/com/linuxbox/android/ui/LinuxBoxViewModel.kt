@@ -498,7 +498,7 @@ class LinuxBoxViewModel(application: Application) : AndroidViewModel(application
                 "pacman -U --noconfirm '$guestPath'"
             }
             lower.endsWith(".appimage") || isElfMagic -> {
-                "chmod +x '$guestPath' && APPIMAGE_EXTRACT_AND_RUN=1 '$guestPath'"
+                "chmod +x '$guestPath' && APPIMAGE_EXTRACT_AND_RUN=1 ELECTRON_DISABLE_SANDBOX=1 '$guestPath' --no-sandbox --disable-dev-shm-usage"
             }
             lower.endsWith(".sh") || lower.endsWith(".run") || isScriptMagic -> {
                 "chmod +x '$guestPath' && sh '$guestPath'"

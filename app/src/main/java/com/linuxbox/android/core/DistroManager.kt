@@ -130,11 +130,51 @@ class DistroManager(private val context: Context) {
             if (!f.exists()) continue
             try {
                 val text = f.readText()
-                if (text.contains("export DISPLAY=:1")) {
-                    f.writeText(text.replace("export DISPLAY=:1", "export DISPLAY=\"\${DISPLAY:-127.0.0.1:10}\""))
+                var updated = text
+                if (updated.contains("export DISPLAY=:1")) {
+                    updated = updated.replace("export DISPLAY=:1", "export DISPLAY=\"\${DISPLAY:-127.0.0.1:10}\"")
+                }
+                if (!updated.contains("ELECTRON_DISABLE_SANDBOX")) {
+                    updated += "\nexport ELECTRON_DISABLE_SANDBOX=1\nexport QTWEBENGINE_DISABLE_SANDBOX=1\nexport MOZ_FAKE_NO_SANDBOX=1\n"
+                }
+                if (updated != text) {
+                    f.writeText(updated)
                 }
             } catch (_: Throwable) {
                 // ignore
+            }
+        }
+
+        // Auto-wrap Chromium/Electron binaries in /usr/local/bin with --no-sandbox --disable-dev-shm-usage
+        val localBin = File(rootfs, "usr/local/bin")
+        val chromiumApps = listOf(
+            "chromium",
+            "chromium-browser",
+            "google-chrome",
+            "google-chrome-stable",
+            "brave-browser",
+            "code",
+            "codium",
+            "discord",
+            "obsidian"
+        )
+        for (appName in chromiumApps) {
+            val realBin = File(rootfs, "usr/bin/$appName")
+            val wrapper = File(localBin, appName)
+            if (realBin.exists() && !wrapper.exists()) {
+                try {
+                    localBin.mkdirs()
+                    wrapper.writeText(
+                        "#!/bin/sh\nexec /usr/bin/$appName --no-sandbox --disable-dev-shm-usage \"\$@\"\n"
+                    )
+                    try {
+                        android.system.Os.chmod(wrapper.absolutePath, 0x1ED) // 0755
+                    } catch (_: Throwable) {
+                        wrapper.setExecutable(true, false)
+                    }
+                } catch (_: Throwable) {
+                    // ignore
+                }
             }
         }
     }

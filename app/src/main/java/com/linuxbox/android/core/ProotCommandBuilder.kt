@@ -87,6 +87,9 @@ object ProotCommandBuilder {
         args.add("TMPDIR=/tmp")
         args.add("DISPLAY=127.0.0.1:10")
         args.add("MOZ_FAKE_NO_SANDBOX=1")
+        args.add("ELECTRON_DISABLE_SANDBOX=1")
+        args.add("QTWEBENGINE_DISABLE_SANDBOX=1")
+        args.add("CHROMIUM_FLAGS=--no-sandbox --disable-dev-shm-usage")
         args.add("DEBIAN_FRONTEND=noninteractive")
         extraEnv.forEach { (k, v) ->
             args.add("$k=$v")
