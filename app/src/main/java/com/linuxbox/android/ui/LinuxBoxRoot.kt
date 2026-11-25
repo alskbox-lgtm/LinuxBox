@@ -1,5 +1,6 @@
 package com.linuxbox.android.ui
 
+import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -20,10 +21,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Computer
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.PlayArrow
@@ -49,6 +52,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -309,6 +315,9 @@ private fun ConsoleTaskDialog(
     onLaunch: (String) -> Unit
 ) {
     val listState = rememberLazyListState()
+    val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
+
     LaunchedEffect(task.lines.size) {
         if (task.lines.isNotEmpty()) {
             listState.animateScrollToItem(task.lines.lastIndex)
@@ -382,27 +391,29 @@ private fun ConsoleTaskDialog(
                     border = BorderStroke(1.dp, LinuxBoxColors.Border),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(260.dp)
+                        .height(280.dp)
                 ) {
-                    LazyColumn(
-                        state = listState,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(10.dp)
-                    ) {
-                        items(task.lines) { line ->
-                            Text(
-                                text = line,
-                                color = when {
-                                    line.startsWith("$ ") -> LinuxBoxColors.Primary
-                                    line.contains("ERROR", ignoreCase = true) ||
-                                        line.contains("ERRO", ignoreCase = true) -> Color(0xFFFCA5A5)
-                                    else -> LinuxBoxColors.TextPrimary
-                                },
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 11.sp,
-                                lineHeight = 15.sp
-                            )
+                    SelectionContainer {
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(10.dp)
+                        ) {
+                            items(task.lines) { line ->
+                                Text(
+                                    text = line,
+                                    color = when {
+                                        line.startsWith("$ ") -> LinuxBoxColors.Primary
+                                        line.contains("ERROR", ignoreCase = true) ||
+                                            line.contains("ERRO", ignoreCase = true) -> Color(0xFFFCA5A5)
+                                        else -> LinuxBoxColors.TextPrimary
+                                    },
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 11.sp,
+                                    lineHeight = 15.sp
+                                )
+                            }
                         }
                     }
                 }
@@ -411,28 +422,48 @@ private fun ConsoleTaskDialog(
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    if (task.isRunning) {
-                        OutlinedButton(
-                            onClick = onDismiss,
-                            border = BorderStroke(1.dp, LinuxBoxColors.Danger)
-                        ) {
-                            Text("Cancelar", color = LinuxBoxColors.Danger)
-                        }
-                    } else {
-                        OutlinedButton(onClick = onDismiss) {
-                            Text("Fechar")
-                        }
-                        if (task.exitCode == 0 && !task.launchAfterCommand.isNullOrBlank()) {
-                            Spacer(Modifier.width(8.dp))
-                            Button(
-                                onClick = { onLaunch(task.launchAfterCommand) },
-                                colors = ButtonDefaults.buttonColors(containerColor = LinuxBoxColors.Primary)
+                    OutlinedButton(
+                        onClick = {
+                            clipboard.setText(AnnotatedString(task.lines.joinToString("\n")))
+                            Toast.makeText(context, "Log copiado!", Toast.LENGTH_SHORT).show()
+                        },
+                        border = BorderStroke(1.dp, LinuxBoxColors.Secondary.copy(alpha = 0.7f))
+                    ) {
+                        Icon(
+                            Icons.Default.ContentCopy,
+                            null,
+                            tint = LinuxBoxColors.Secondary,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Spacer(Modifier.width(5.dp))
+                        Text("Copiar Log", color = LinuxBoxColors.Secondary, fontSize = 12.sp)
+                    }
+
+                    Row(horizontalArrangement = Arrangement.End) {
+                        if (task.isRunning) {
+                            OutlinedButton(
+                                onClick = onDismiss,
+                                border = BorderStroke(1.dp, LinuxBoxColors.Danger)
                             ) {
-                                Icon(Icons.Default.PlayArrow, null, tint = Color(0xFF041309), modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text("Abrir no Terminal", color = Color(0xFF041309), fontWeight = FontWeight.Bold)
+                                Text("Cancelar", color = LinuxBoxColors.Danger)
+                            }
+                        } else {
+                            OutlinedButton(onClick = onDismiss) {
+                                Text("Fechar")
+                            }
+                            if (task.exitCode == 0 && !task.launchAfterCommand.isNullOrBlank()) {
+                                Spacer(Modifier.width(8.dp))
+                                Button(
+                                    onClick = { onLaunch(task.launchAfterCommand) },
+                                    colors = ButtonDefaults.buttonColors(containerColor = LinuxBoxColors.Primary)
+                                ) {
+                                    Icon(Icons.Default.PlayArrow, null, tint = Color(0xFF041309), modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Abrir no Terminal", color = Color(0xFF041309), fontWeight = FontWeight.Bold)
+                                }
                             }
                         }
                     }
